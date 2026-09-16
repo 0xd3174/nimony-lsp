@@ -11,6 +11,7 @@ use lsp_server::{Connection, ErrorCode, Message, Notification, RequestId, Respon
 use lsp_types::*;
 
 use crate::coords::LineIndex;
+use crate::diagnostics::DiagnosticEngine;
 
 #[derive(Debug, Clone)]
 pub struct Document {
@@ -110,14 +111,21 @@ pub struct ServerState {
     pub in_flight: HashMap<RequestId, Arc<AtomicBool>>,
     pub shutdown_received: bool,
     pub project_root: Option<PathBuf>,
+    pub diag_engine: DiagnosticEngine,
 }
 
 pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let nimony_bin = match std::env::var("NIMONY_BIN") {
+        Ok(b) => PathBuf::from(b),
+        Err(_) => PathBuf::from("nimony"),
+    };
+
     let mut state = ServerState {
         documents: HashMap::new(),
         in_flight: HashMap::new(),
         shutdown_received: false,
         project_root: None,
+        diag_engine: DiagnosticEngine::new(nimony_bin),
     };
 
     // Phase 1: Wait for initialize request
@@ -254,6 +262,44 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
                                     });
                                 }
                             }
+                            "textDocument/didSave" => {
+                                if let Ok(params) = serde_json::from_value::<DidSaveTextDocumentParams>(notif.params) {
+                                    let uri = params.text_document.uri;
+                                    let (path, text, version) = if let Some(doc) = state.documents.get(&uri) {
+                                        (doc.path.clone(), doc.text.clone(), doc.version)
+                                    } else {
+                                        let path = uri.to_file_path().unwrap_or_else(|_| PathBuf::from(uri.path()));
+                                        let text = std::fs::read_to_string(&path).unwrap_or_default();
+                                        (path, text, 0)
+                                    };
+
+                                    let engine = state.diag_engine.clone();
+                                    let project_root = state.project_root.clone();
+                                    let sender = connection.sender.clone();
+                                    std::thread::spawn(move || {
+                                        if let Ok(parsed) = engine.check_on_save(
+                                            &path,
+                                            &uri,
+                                            &text,
+                                            project_root.as_deref(),
+                                            None,
+                                        ) {
+                                            for (u, diags) in parsed.by_uri {
+                                                let notif = Notification {
+                                                    method: "textDocument/publishDiagnostics".to_string(),
+                                                    params: serde_json::to_value(PublishDiagnosticsParams {
+                                                        uri: u,
+                                                        diagnostics: diags,
+                                                        version: Some(version),
+                                                    })
+                                                    .unwrap_or_default(),
+                                                };
+                                                let _ = sender.send(notif.into());
+                                            }
+                                        }
+                                    });
+                                }
+                            }
                             "textDocument/didClose" => {
                                 if let Ok(params) = serde_json::from_value::<DidCloseTextDocumentParams>(notif.params) {
                                     let uri = params.text_document.uri;
@@ -269,7 +315,7 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
                                         method: "textDocument/publishDiagnostics".to_string(),
                                         params: serde_json::to_value(clear_params).unwrap_or_default(),
                                     };
-                                    connection.sender.send(clear_notif.into())?;
+                                    let _ = connection.sender.send(clear_notif.into());
                                 }
                             }
                             _ => {}
@@ -279,8 +325,37 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
                 }
             }
             recv(debounce_rx) -> debounce_evt => {
-                if let Ok(_evt) = debounce_evt {
-                    // Handled in diagnostics step
+                if let Ok(evt) = debounce_evt {
+                    if let Some(doc) = state.documents.get(&evt.uri) {
+                        if doc.version == evt.version {
+                            let engine = state.diag_engine.clone();
+                            let doc_clone = doc.clone();
+                            let project_root = state.project_root.clone();
+                            let sender = connection.sender.clone();
+                            std::thread::spawn(move || {
+                                if let Ok(parsed) = engine.check_live_shadow(
+                                    &doc_clone.path,
+                                    &doc_clone.uri,
+                                    &doc_clone.text,
+                                    project_root.as_deref(),
+                                    None,
+                                ) {
+                                    for (u, diags) in parsed.by_uri {
+                                        let notif = Notification {
+                                            method: "textDocument/publishDiagnostics".to_string(),
+                                            params: serde_json::to_value(PublishDiagnosticsParams {
+                                                uri: u,
+                                                diagnostics: diags,
+                                                version: Some(doc_clone.version),
+                                            })
+                                            .unwrap_or_default(),
+                                        };
+                                        let _ = sender.send(notif.into());
+                                    }
+                                }
+                            });
+                        }
+                    }
                 }
             }
         }

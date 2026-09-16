@@ -2,6 +2,7 @@ use std::error::Error;
 use lsp_server::Connection;
 
 mod coords;
+mod diagnostics;
 mod server;
 
 fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
