@@ -1,0 +1,290 @@
+#![allow(dead_code)]
+
+use std::collections::HashMap;
+use std::error::Error;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+
+use lsp_server::{Connection, ErrorCode, Message, Notification, RequestId, Response};
+use lsp_types::*;
+
+use crate::coords::LineIndex;
+
+#[derive(Debug, Clone)]
+pub struct Document {
+    pub uri: Url,
+    pub path: PathBuf,
+    pub version: i32,
+    pub text: String,
+    pub line_index: LineIndex,
+}
+
+impl Document {
+    pub fn new(uri: Url, version: i32, text: String) -> Self {
+        let path = uri
+            .to_file_path()
+            .unwrap_or_else(|_| PathBuf::from(uri.path()));
+        let line_index = LineIndex::new(&text);
+        Self {
+            uri,
+            path,
+            version,
+            text,
+            line_index,
+        }
+    }
+
+    pub fn apply_changes(&mut self, version: i32, changes: Vec<TextDocumentContentChangeEvent>) {
+        self.version = version;
+        for change in changes {
+            match change.range {
+                Some(range) => {
+                    let start_byte = self.line_index.lsp_pos_to_byte_offset(&self.text, range.start);
+                    let end_byte = self.line_index.lsp_pos_to_byte_offset(&self.text, range.end);
+
+                    let start = start_byte.min(self.text.len());
+                    let end = end_byte.min(self.text.len());
+                    let (start, end) = if start <= end { (start, end) } else { (end, start) };
+
+                    let start = clamp_char_boundary(&self.text, start);
+                    let end = clamp_char_boundary(&self.text, end);
+
+                    self.text.replace_range(start..end, &change.text);
+                    self.line_index = LineIndex::new(&self.text);
+                }
+                None => {
+                    self.text = change.text;
+                    self.line_index = LineIndex::new(&self.text);
+                }
+            }
+        }
+    }
+}
+
+fn clamp_char_boundary(s: &str, mut idx: usize) -> usize {
+    idx = idx.min(s.len());
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    idx
+}
+
+pub fn server_capabilities() -> ServerCapabilities {
+    ServerCapabilities {
+        text_document_sync: Some(TextDocumentSyncCapability::Options(
+            TextDocumentSyncOptions {
+                open_close: Some(true),
+                change: Some(TextDocumentSyncKind::INCREMENTAL),
+                will_save: Some(false),
+                will_save_wait_until: Some(false),
+                save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
+                    include_text: Some(false),
+                })),
+            },
+        )),
+        definition_provider: Some(OneOf::Left(true)),
+        references_provider: Some(OneOf::Left(true)),
+        hover_provider: Some(HoverProviderCapability::Simple(true)),
+        document_highlight_provider: Some(OneOf::Left(true)),
+        completion_provider: Some(CompletionOptions {
+            resolve_provider: Some(false),
+            trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+            all_commit_characters: None,
+            work_done_progress_options: Default::default(),
+            completion_item: None,
+        }),
+        document_formatting_provider: Some(OneOf::Left(true)),
+        ..Default::default()
+    }
+}
+
+pub struct DebounceEvent {
+    pub uri: Url,
+    pub version: i32,
+}
+
+pub struct ServerState {
+    pub documents: HashMap<Url, Document>,
+    pub in_flight: HashMap<RequestId, Arc<AtomicBool>>,
+    pub shutdown_received: bool,
+    pub project_root: Option<PathBuf>,
+}
+
+pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let mut state = ServerState {
+        documents: HashMap::new(),
+        in_flight: HashMap::new(),
+        shutdown_received: false,
+        project_root: None,
+    };
+
+    // Phase 1: Wait for initialize request
+    let (init_id, init_params_value) = match connection.initialize_start() {
+        Ok(pair) => pair,
+        Err(e) => {
+            eprintln!("[nimony-lsp] initialize_start terminated: {e}");
+            return Ok(());
+        }
+    };
+
+    if let Ok(init_params) = serde_json::from_value::<InitializeParams>(init_params_value) {
+        if let Some(folders) = init_params.workspace_folders {
+            if let Some(first) = folders.first() {
+                if let Ok(path) = first.uri.to_file_path() {
+                    state.project_root = Some(path);
+                }
+            }
+        }
+        if state.project_root.is_none() {
+            #[allow(deprecated)]
+            if let Some(root_uri) = init_params.root_uri {
+                if let Ok(path) = root_uri.to_file_path() {
+                    state.project_root = Some(path);
+                }
+            }
+        }
+    }
+
+    // Phase 2: Send initialize result response
+    let init_result = InitializeResult {
+        capabilities: server_capabilities(),
+        server_info: Some(ServerInfo {
+            name: "nimony-lsp".to_string(),
+            version: Some(env!("CARGO_PKG_VERSION").to_string()),
+        }),
+    };
+    connection
+        .sender
+        .send(Response::new_ok(init_id, init_result).into())?;
+
+    let (debounce_tx, debounce_rx) = crossbeam_channel::unbounded::<DebounceEvent>();
+
+    // Phase 3: Main Event Loop
+    loop {
+        crossbeam_channel::select! {
+            recv(connection.receiver) -> msg => {
+                let msg = match msg {
+                    Ok(m) => m,
+                    Err(_) => break, // Channel closed
+                };
+
+                match msg {
+                    Message::Request(req) => {
+                        if state.shutdown_received {
+                            let err = Response::new_err(
+                                req.id,
+                                ErrorCode::InvalidRequest as i32,
+                                "Server is shutting down".to_string(),
+                            );
+                            connection.sender.send(err.into())?;
+                            continue;
+                        }
+
+                        match req.method.as_str() {
+                            "shutdown" => {
+                                state.shutdown_received = true;
+                                connection
+                                    .sender
+                                    .send(Response::new_ok(req.id, serde_json::Value::Null).into())?;
+                            }
+                            _ => {
+                                let err = Response::new_err(
+                                    req.id,
+                                    ErrorCode::MethodNotFound as i32,
+                                    format!("Method not found: {}", req.method),
+                                );
+                                connection.sender.send(err.into())?;
+                            }
+                        }
+                    }
+                    Message::Notification(notif) => {
+                        match notif.method.as_str() {
+                            "initialized" => {
+                                eprintln!("[nimony-lsp] Client initialized notification received.");
+                            }
+                            "exit" => {
+                                if state.shutdown_received {
+                                    return Ok(());
+                                } else {
+                                    std::process::exit(1);
+                                }
+                            }
+                            "$/cancelRequest" => {
+                                if let Ok(params) = serde_json::from_value::<CancelParams>(notif.params) {
+                                    let req_id = match params.id {
+                                        NumberOrString::Number(n) => RequestId::from(n),
+                                        NumberOrString::String(s) => RequestId::from(s),
+                                    };
+                                    if let Some(token) = state.in_flight.get(&req_id) {
+                                        token.store(true, Ordering::SeqCst);
+                                    }
+                                }
+                            }
+                            "textDocument/didOpen" => {
+                                if let Ok(params) = serde_json::from_value::<DidOpenTextDocumentParams>(notif.params) {
+                                    let uri = params.text_document.uri;
+                                    let version = params.text_document.version;
+                                    let text = params.text_document.text;
+                                    let doc = Document::new(uri.clone(), version, text);
+                                    state.documents.insert(uri.clone(), doc);
+
+                                    // Trigger 350ms debounce
+                                    let tx = debounce_tx.clone();
+                                    std::thread::spawn(move || {
+                                        std::thread::sleep(Duration::from_millis(350));
+                                        let _ = tx.send(DebounceEvent { uri, version });
+                                    });
+                                }
+                            }
+                            "textDocument/didChange" => {
+                                if let Ok(params) = serde_json::from_value::<DidChangeTextDocumentParams>(notif.params) {
+                                    let uri = params.text_document.uri;
+                                    let version = params.text_document.version;
+                                    if let Some(doc) = state.documents.get_mut(&uri) {
+                                        doc.apply_changes(version, params.content_changes);
+                                    }
+
+                                    // Trigger 350ms debounce
+                                    let tx = debounce_tx.clone();
+                                    std::thread::spawn(move || {
+                                        std::thread::sleep(Duration::from_millis(350));
+                                        let _ = tx.send(DebounceEvent { uri, version });
+                                    });
+                                }
+                            }
+                            "textDocument/didClose" => {
+                                if let Ok(params) = serde_json::from_value::<DidCloseTextDocumentParams>(notif.params) {
+                                    let uri = params.text_document.uri;
+                                    state.documents.remove(&uri);
+
+                                    // Clear diagnostics for closed document
+                                    let clear_params = PublishDiagnosticsParams {
+                                        uri,
+                                        diagnostics: vec![],
+                                        version: None,
+                                    };
+                                    let clear_notif = Notification {
+                                        method: "textDocument/publishDiagnostics".to_string(),
+                                        params: serde_json::to_value(clear_params).unwrap_or_default(),
+                                    };
+                                    connection.sender.send(clear_notif.into())?;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    Message::Response(_) => {}
+                }
+            }
+            recv(debounce_rx) -> debounce_evt => {
+                if let Ok(_evt) = debounce_evt {
+                    // Handled in diagnostics step
+                }
+            }
+        }
+    }
+
+    Ok(())
+}

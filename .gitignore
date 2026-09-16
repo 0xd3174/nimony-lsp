@@ -7,6 +7,9 @@ result-*
 
 # Shadow & temporary test files
 *.tmp_*.nim
+tmp_shadow_*.nim
+tmp_nav_*.nim
+_tmp_*.nim
 
 # Editor & IDE files
 .vscode/
