@@ -1,0 +1,15 @@
+# Build artifacts
+/target/
+/nimcache/
+result
+result-*
+*.wasm
+
+# Shadow & temporary test files
+*.tmp_*.nim
+
+# Editor & IDE files
+.vscode/
+.idea/
+*.swp
+*~
