@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use std::collections::HashSet;
+use std::sync::LazyLock;
 use lsp_types::{CompletionItem, CompletionItemKind, InsertTextFormat, Position};
 use regex::Regex;
 
@@ -124,6 +125,32 @@ const SNIPPETS: &[SnippetDef] = &[
     },
 ];
 
+static RE_PROC: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?m)^\s*(?:proc|func|iterator|template|macro|converter|method)\s+([a-zA-Z_][a-zA-Z0-9_]*)\*?\s*(\([^)]*\))?(?:\s*:\s*([a-zA-Z0-9_\[\],\s]+))?",
+    )
+    .expect("valid proc regex")
+});
+
+static RE_TYPE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?m)^\s*([a-zA-Z_][a-zA-Z0-9_]*)\*?(?:\[[^\]]+\])?\s*=\s*(?:object|enum|concept|ref|ptr|distinct)",
+    )
+    .expect("valid type regex")
+});
+
+static RE_FIELD: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)^\s+([a-zA-Z_][a-zA-Z0-9_]*)\*?\s*:\s*([a-zA-Z0-9_\[\],\s]+)")
+        .expect("valid field regex")
+});
+
+static RE_VAR: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?m)^\s*(?:var|let|const)\s+([a-zA-Z_][a-zA-Z0-9_]*)\*?(?:\s*:\s*([a-zA-Z0-9_\[\],\s]+))?",
+    )
+    .expect("valid var regex")
+});
+
 #[derive(Clone)]
 pub struct CompletionEngine;
 
@@ -210,12 +237,7 @@ impl CompletionEngine {
         }
 
         // 4. In-buffer symbol scanner (resilient to syntax errors elsewhere)
-        let proc_regex = Regex::new(
-            r"(?m)^\s*(?:proc|func|iterator|template|macro|converter|method)\s+([a-zA-Z_][a-zA-Z0-9_]*)\*?\s*(\([^)]*\))?(?:\s*:\s*([a-zA-Z0-9_\[\],\s]+))?",
-        )
-        .unwrap();
-
-        for cap in proc_regex.captures_iter(doc_text) {
+        for cap in RE_PROC.captures_iter(doc_text) {
             let name = cap.get(1).map(|m| m.as_str()).unwrap_or("");
             if !name.is_empty()
                 && (prefix_lower.is_empty() || name.to_lowercase().starts_with(&prefix_lower))
@@ -234,12 +256,7 @@ impl CompletionEngine {
             }
         }
 
-        let type_regex = Regex::new(
-            r"(?m)^\s*([a-zA-Z_][a-zA-Z0-9_]*)\*?(?:\[[^\]]+\])?\s*=\s*(?:object|enum|concept|ref|ptr|distinct)",
-        )
-        .unwrap();
-
-        for cap in type_regex.captures_iter(doc_text) {
+        for cap in RE_TYPE.captures_iter(doc_text) {
             let name = cap.get(1).map(|m| m.as_str()).unwrap_or("");
             if !name.is_empty()
                 && (prefix_lower.is_empty() || name.to_lowercase().starts_with(&prefix_lower))
@@ -255,12 +272,7 @@ impl CompletionEngine {
             }
         }
 
-        let field_regex = Regex::new(
-            r"(?m)^\s+([a-zA-Z_][a-zA-Z0-9_]*)\*?\s*:\s*([a-zA-Z0-9_\[\],\s]+)",
-        )
-        .unwrap();
-
-        for cap in field_regex.captures_iter(doc_text) {
+        for cap in RE_FIELD.captures_iter(doc_text) {
             let name = cap.get(1).map(|m| m.as_str()).unwrap_or("");
             if !name.is_empty()
                 && (prefix_lower.is_empty() || name.to_lowercase().starts_with(&prefix_lower))
@@ -278,12 +290,7 @@ impl CompletionEngine {
             }
         }
 
-        let var_regex = Regex::new(
-            r"(?m)^\s*(?:var|let|const)\s+([a-zA-Z_][a-zA-Z0-9_]*)\*?(?:\s*:\s*([a-zA-Z0-9_\[\],\s]+))?",
-        )
-        .unwrap();
-
-        for cap in var_regex.captures_iter(doc_text) {
+        for cap in RE_VAR.captures_iter(doc_text) {
             let name = cap.get(1).map(|m| m.as_str()).unwrap_or("");
             if !name.is_empty()
                 && (prefix_lower.is_empty() || name.to_lowercase().starts_with(&prefix_lower))
