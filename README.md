@@ -2,7 +2,7 @@
 
 [![Tests](https://img.shields.io/badge/E2E%20Tests-94%2F94%20PASS-brightgreen)](tests/e2e/run_tests.sh)
 [![Unit Tests](https://img.shields.io/badge/Unit%20Tests-25%2F25%20PASS-brightgreen)](crates/nimony-lsp)
-[![Target](https://img.shields.io/badge/Zed%20WASM-wasm32--wasip1-blue)](crates/zed-nimony)
+[![Target](https://img.shields.io/badge/Zed%20WASM-wasm32--wasip2-blue)](crates/zed-nimony)
 [![Nix](https://img.shields.io/badge/Nix-Flake-blueviolet)](flake.nix)
 
 High-performance Language Server Protocol (LSP 3.17) server for the [Nimony](https://github.com/nim-lang/nimony) compiler, paired with an official [Zed](https://zed.dev) editor extension.
@@ -63,7 +63,7 @@ flowchart LR
 - **Zed Extension:**
   - Registers the `Nimony` language for `.nim`, `.nims`, and `.nimble` files.
   - Complete Tree-sitter syntax highlighting (`highlights.scm`), auto-bracket pairing (`brackets.scm`), and indentation rules (`indents.scm`).
-  - Native WASM binary (`wasm32-wasip1`) that manages `nimony-lsp` lifecycle.
+  - Native WASM binary (`wasm32-wasip2`) that manages `nimony-lsp` lifecycle.
 
 ---
 
@@ -91,8 +91,6 @@ nimony-lsp/
 └── tests/
     └── e2e/                      # Comprehensive 5-Tier E2E test suite
 ```
-
----
 
 ---
 
@@ -253,7 +251,10 @@ On Linux/macOS, edit `~/.config/zed/settings.json` (or on Windows `%APPDATA%\Zed
   "lsp": {
     "nimony-lsp": {
       "binary": {
-        "path": "/home/delta/code/nimony-lsp/target/release/nimony-lsp"
+        // If nimony-lsp is in your PATH (e.g., via make install-lsp), you can omit this block or set:
+        "path": "nimony-lsp"
+        // Or specify an absolute path to your compiled binary:
+        // "path": "/path/to/nimony-lsp/target/release/nimony-lsp"
       }
     }
   }
