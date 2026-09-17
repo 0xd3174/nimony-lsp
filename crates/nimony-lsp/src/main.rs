@@ -16,7 +16,7 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let (connection, io_threads) = Connection::stdio();
     server::run(connection)?;
-    let _ = io_threads.join();
+    io_threads.join()?;
 
     if std::env::var("NIMONY_LSP_DEBUG").is_ok() {
         eprintln!("[nimony-lsp] Clean exit completed.");

@@ -27,9 +27,7 @@ pub struct Document {
 
 impl Document {
     pub fn new(uri: Url, version: i32, text: String) -> Self {
-        let path = uri
-            .to_file_path()
-            .unwrap_or_else(|_| PathBuf::from(uri.path()));
+        let path = uri_to_file_path(&uri);
         let line_index = LineIndex::new(&text);
         Self {
             uri,
@@ -77,11 +75,26 @@ fn clamp_char_boundary(s: &str, mut idx: usize) -> usize {
     idx
 }
 
+fn uri_to_file_path(uri: &Url) -> PathBuf {
+    if let Ok(p) = uri.to_file_path() {
+        return p;
+    }
+    let path_str = uri.path();
+    #[cfg(windows)]
+    {
+        let bytes = path_str.as_bytes();
+        if bytes.len() >= 3 && bytes[0] == b'/' && bytes[1].is_ascii_alphabetic() && bytes[2] == b':' {
+            return PathBuf::from(&path_str[1..]);
+        }
+    }
+    PathBuf::from(path_str)
+}
+
 fn get_doc_or_read(documents: &HashMap<Url, Document>, uri: &Url) -> (PathBuf, Arc<str>) {
     if let Some(doc) = documents.get(uri) {
         (doc.path.clone(), Arc::clone(&doc.text))
     } else {
-        let p = uri.to_file_path().unwrap_or_else(|_| PathBuf::from(uri.path()));
+        let p = uri_to_file_path(uri);
         let t: Arc<str> = std::fs::read_to_string(&p).unwrap_or_default().into();
         (p, t)
     }
@@ -91,7 +104,7 @@ fn get_text_or_read(documents: &HashMap<Url, Document>, uri: &Url) -> Arc<str> {
     if let Some(doc) = documents.get(uri) {
         Arc::clone(&doc.text)
     } else {
-        let p = uri.to_file_path().unwrap_or_else(|_| PathBuf::from(uri.path()));
+        let p = uri_to_file_path(uri);
         std::fs::read_to_string(&p).unwrap_or_default().into()
     }
 }
@@ -533,7 +546,7 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
                                     let (path, text, version) = if let Some(doc) = state.documents.get(&uri) {
                                         (doc.path.clone(), Arc::clone(&doc.text), doc.version)
                                     } else {
-                                        let path = uri.to_file_path().unwrap_or_else(|_| PathBuf::from(uri.path()));
+                                        let path = uri_to_file_path(&uri);
                                         let text: Arc<str> = std::fs::read_to_string(&path).unwrap_or_default().into();
                                         (path, text, 0)
                                     };
