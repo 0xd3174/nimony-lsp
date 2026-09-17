@@ -97,6 +97,10 @@ nimony-lsp/
 
 ## Installation
 
+### Prerequisites
+- **Nimony Compiler:** `nimony` must be accessible in your `PATH` (or specified via the `NIMONY_BIN` environment variable) to provide diagnostics, Go to Definition, and Find References.
+- **Code Formatter (Optional):** `nimpretty` (included with Nim 2.0+) must be in your `PATH` (or specified via `NIMPRETTY_BIN`) to enable document formatting.
+
 Precompiled binaries and extension bundles are provided under [Releases](https://github.com/0xd3174/nimony-lsp/releases).
 
 ### 1. Download Executables
