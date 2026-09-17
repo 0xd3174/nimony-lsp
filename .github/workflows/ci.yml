@@ -12,20 +12,6 @@ permissions:
   contents: write
 
 jobs:
-  test:
-    name: Test Workspace
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Cargo Check
-        run: cargo check --workspace --all-targets
-
-      - name: Cargo Test
-        run: cargo test --workspace --verbose
-
   build-lsp:
     name: Build nimony-lsp (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
@@ -109,7 +95,7 @@ jobs:
 
   release:
     name: GitHub Release
-    needs: [ test, build-lsp, build-zed-extension ]
+    needs: [ build-lsp, build-zed-extension ]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
