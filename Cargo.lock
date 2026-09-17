@@ -458,7 +458,7 @@ dependencies = [
 
 [[package]]
 name = "nimony-lsp"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "crossbeam-channel",
  "lsp-server",
@@ -956,7 +956,7 @@ dependencies = [
 
 [[package]]
 name = "zed-nimony"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde",
  "serde_json",
