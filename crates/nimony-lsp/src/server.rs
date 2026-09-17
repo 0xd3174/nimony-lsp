@@ -10,8 +10,11 @@ use std::time::Duration;
 use lsp_server::{Connection, ErrorCode, Message, Notification, RequestId, Response};
 use lsp_types::*;
 
+use crate::completion::CompletionEngine;
 use crate::coords::LineIndex;
 use crate::diagnostics::DiagnosticEngine;
+use crate::formatting::FormattingEngine;
+use crate::navigation::NavigationEngine;
 
 #[derive(Debug, Clone)]
 pub struct Document {
@@ -112,6 +115,9 @@ pub struct ServerState {
     pub shutdown_received: bool,
     pub project_root: Option<PathBuf>,
     pub diag_engine: DiagnosticEngine,
+    pub nav_engine: NavigationEngine,
+    pub completion_engine: CompletionEngine,
+    pub formatting_engine: FormattingEngine,
 }
 
 pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -120,12 +126,20 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
         Err(_) => PathBuf::from("nimony"),
     };
 
+    let nimpretty_bin = match std::env::var("NIMPRETTY_BIN") {
+        Ok(b) => PathBuf::from(b),
+        Err(_) => PathBuf::from("nimpretty"),
+    };
+
     let mut state = ServerState {
         documents: HashMap::new(),
         in_flight: HashMap::new(),
         shutdown_received: false,
         project_root: None,
-        diag_engine: DiagnosticEngine::new(nimony_bin),
+        diag_engine: DiagnosticEngine::new(nimony_bin.clone()),
+        nav_engine: NavigationEngine::new(nimony_bin),
+        completion_engine: CompletionEngine::new(),
+        formatting_engine: FormattingEngine::new(nimpretty_bin),
     };
 
     // Phase 1: Wait for initialize request
@@ -196,6 +210,140 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
                                 connection
                                     .sender
                                     .send(Response::new_ok(req.id, serde_json::Value::Null).into())?;
+                            }
+                            "textDocument/definition" => {
+                                let cancel_token = Arc::new(AtomicBool::new(false));
+                                state.in_flight.insert(req.id.clone(), cancel_token.clone());
+                                if let Ok(params) = serde_json::from_value::<GotoDefinitionParams>(req.params) {
+                                    let uri = params.text_document_position_params.text_document.uri;
+                                    let pos = params.text_document_position_params.position;
+                                    let (path, text) = if let Some(doc) = state.documents.get(&uri) {
+                                        (doc.path.clone(), doc.text.clone())
+                                    } else {
+                                        let p = uri.to_file_path().unwrap_or_else(|_| PathBuf::from(uri.path()));
+                                        let t = std::fs::read_to_string(&p).unwrap_or_default();
+                                        (p, t)
+                                    };
+                                    let nav = state.nav_engine.clone();
+                                    let root = state.project_root.clone();
+                                    let sender = connection.sender.clone();
+                                    let req_id = req.id.clone();
+                                    std::thread::spawn(move || {
+                                        let resp = match nav.goto_definition(&path, &uri, &text, pos, root.as_deref(), Some(&cancel_token)) {
+                                            Ok(res) => Response::new_ok(req_id, res),
+                                            Err(e) => Response::new_err(req_id, ErrorCode::InternalError as i32, e),
+                                        };
+                                        let _ = sender.send(resp.into());
+                                    });
+                                }
+                            }
+                            "textDocument/references" => {
+                                let cancel_token = Arc::new(AtomicBool::new(false));
+                                state.in_flight.insert(req.id.clone(), cancel_token.clone());
+                                if let Ok(params) = serde_json::from_value::<ReferenceParams>(req.params) {
+                                    let uri = params.text_document_position.text_document.uri;
+                                    let pos = params.text_document_position.position;
+                                    let inc_decl = params.context.include_declaration;
+                                    let (path, text) = if let Some(doc) = state.documents.get(&uri) {
+                                        (doc.path.clone(), doc.text.clone())
+                                    } else {
+                                        let p = uri.to_file_path().unwrap_or_else(|_| PathBuf::from(uri.path()));
+                                        let t = std::fs::read_to_string(&p).unwrap_or_default();
+                                        (p, t)
+                                    };
+                                    let nav = state.nav_engine.clone();
+                                    let root = state.project_root.clone();
+                                    let sender = connection.sender.clone();
+                                    let req_id = req.id.clone();
+                                    std::thread::spawn(move || {
+                                        let resp = match nav.find_references(&path, &uri, &text, pos, inc_decl, root.as_deref(), Some(&cancel_token)) {
+                                            Ok(res) => Response::new_ok(req_id, res),
+                                            Err(e) => Response::new_err(req_id, ErrorCode::InternalError as i32, e),
+                                        };
+                                        let _ = sender.send(resp.into());
+                                    });
+                                }
+                            }
+                            "textDocument/hover" => {
+                                let cancel_token = Arc::new(AtomicBool::new(false));
+                                state.in_flight.insert(req.id.clone(), cancel_token.clone());
+                                if let Ok(params) = serde_json::from_value::<HoverParams>(req.params) {
+                                    let uri = params.text_document_position_params.text_document.uri;
+                                    let pos = params.text_document_position_params.position;
+                                    let (path, text) = if let Some(doc) = state.documents.get(&uri) {
+                                        (doc.path.clone(), doc.text.clone())
+                                    } else {
+                                        let p = uri.to_file_path().unwrap_or_else(|_| PathBuf::from(uri.path()));
+                                        let t = std::fs::read_to_string(&p).unwrap_or_default();
+                                        (p, t)
+                                    };
+                                    let nav = state.nav_engine.clone();
+                                    let root = state.project_root.clone();
+                                    let sender = connection.sender.clone();
+                                    let req_id = req.id.clone();
+                                    std::thread::spawn(move || {
+                                        let resp = match nav.hover(&path, &uri, &text, pos, root.as_deref(), Some(&cancel_token)) {
+                                            Ok(res) => Response::new_ok(req_id, res),
+                                            Err(e) => Response::new_err(req_id, ErrorCode::InternalError as i32, e),
+                                        };
+                                        let _ = sender.send(resp.into());
+                                    });
+                                }
+                            }
+                            "textDocument/documentHighlight" => {
+                                if let Ok(params) = serde_json::from_value::<DocumentHighlightParams>(req.params) {
+                                    let uri = params.text_document_position_params.text_document.uri;
+                                    let pos = params.text_document_position_params.position;
+                                    let text = if let Some(doc) = state.documents.get(&uri) {
+                                        doc.text.clone()
+                                    } else {
+                                        let p = uri.to_file_path().unwrap_or_else(|_| PathBuf::from(uri.path()));
+                                        std::fs::read_to_string(&p).unwrap_or_default()
+                                    };
+                                    let resp = match state.nav_engine.document_highlight(&text, pos) {
+                                        Ok(res) => Response::new_ok(req.id, res),
+                                        Err(e) => Response::new_err(req.id, ErrorCode::InternalError as i32, e),
+                                    };
+                                    connection.sender.send(resp.into())?;
+                                }
+                            }
+                            "textDocument/completion" => {
+                                if let Ok(params) = serde_json::from_value::<CompletionParams>(req.params) {
+                                    let uri = params.text_document_position.text_document.uri;
+                                    let pos = params.text_document_position.position;
+                                    let text = if let Some(doc) = state.documents.get(&uri) {
+                                        doc.text.clone()
+                                    } else {
+                                        let p = uri.to_file_path().unwrap_or_else(|_| PathBuf::from(uri.path()));
+                                        std::fs::read_to_string(&p).unwrap_or_default()
+                                    };
+                                    let items = state.completion_engine.complete(&text, pos);
+                                    let resp = Response::new_ok(req.id, items);
+                                    connection.sender.send(resp.into())?;
+                                }
+                            }
+                            "textDocument/formatting" => {
+                                let cancel_token = Arc::new(AtomicBool::new(false));
+                                state.in_flight.insert(req.id.clone(), cancel_token.clone());
+                                if let Ok(params) = serde_json::from_value::<DocumentFormattingParams>(req.params) {
+                                    let uri = params.text_document.uri;
+                                    let text = if let Some(doc) = state.documents.get(&uri) {
+                                        doc.text.clone()
+                                    } else {
+                                        let p = uri.to_file_path().unwrap_or_else(|_| PathBuf::from(uri.path()));
+                                        std::fs::read_to_string(&p).unwrap_or_default()
+                                    };
+                                    let formatter = state.formatting_engine.clone();
+                                    let sender = connection.sender.clone();
+                                    let req_id = req.id.clone();
+                                    std::thread::spawn(move || {
+                                        let resp = match formatter.format(&text, &params.options, Some(&cancel_token)) {
+                                            Ok(res) => Response::new_ok(req_id, res),
+                                            Err(e) => Response::new_err(req_id, ErrorCode::InternalError as i32, e),
+                                        };
+                                        let _ = sender.send(resp.into());
+                                    });
+                                }
                             }
                             _ => {
                                 let err = Response::new_err(

@@ -1,8 +1,11 @@
 use std::error::Error;
 use lsp_server::Connection;
 
+mod completion;
 mod coords;
 mod diagnostics;
+mod formatting;
+mod navigation;
 mod server;
 
 fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
