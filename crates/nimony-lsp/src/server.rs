@@ -5,7 +5,7 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use lsp_server::{Connection, ErrorCode, Message, Notification, RequestId, Response};
 use lsp_types::*;
@@ -212,7 +212,61 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
         .sender
         .send(Response::new_ok(init_id, init_result).into())?;
 
+    let (trigger_tx, trigger_rx) = crossbeam_channel::unbounded::<DebounceEvent>();
     let (debounce_tx, debounce_rx) = crossbeam_channel::unbounded::<DebounceEvent>();
+
+    std::thread::Builder::new()
+        .name("debounce-worker".to_string())
+        .spawn(move || {
+            let mut pending: HashMap<Url, (i32, Instant)> = HashMap::new();
+
+            loop {
+                let now = Instant::now();
+                let earliest = pending.values().map(|(_, deadline)| *deadline).min();
+
+                let recv_res = match earliest {
+                    Some(deadline) => {
+                        if deadline <= now {
+                            None
+                        } else {
+                            let timeout = deadline - now;
+                            match trigger_rx.recv_timeout(timeout) {
+                                Ok(evt) => Some(evt),
+                                Err(crossbeam_channel::RecvTimeoutError::Timeout) => None,
+                                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+                            }
+                        }
+                    }
+                    None => match trigger_rx.recv() {
+                        Ok(evt) => Some(evt),
+                        Err(_) => break,
+                    },
+                };
+
+                if let Some(evt) = recv_res {
+                    let deadline = Instant::now() + Duration::from_millis(350);
+                    pending.insert(evt.uri, (evt.version, deadline));
+                }
+
+                let now = Instant::now();
+                let mut expired = Vec::new();
+                pending.retain(|uri, (version, deadline)| {
+                    if *deadline <= now {
+                        expired.push((uri.clone(), *version));
+                        false
+                    } else {
+                        true
+                    }
+                });
+
+                for (uri, version) in expired {
+                    if debounce_tx.send(DebounceEvent { uri, version }).is_err() {
+                        return;
+                    }
+                }
+            }
+        })
+        .expect("failed to spawn debounce worker");
 
     // Phase 3: Main Event Loop
     loop {
@@ -470,11 +524,7 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
                                     state.documents.insert(uri.clone(), doc);
 
                                     // Trigger 350ms debounce
-                                    let tx = debounce_tx.clone();
-                                    std::thread::spawn(move || {
-                                        std::thread::sleep(Duration::from_millis(350));
-                                        let _ = tx.send(DebounceEvent { uri, version });
-                                    });
+                                    let _ = trigger_tx.send(DebounceEvent { uri, version });
                                 }
                             }
                             "textDocument/didChange" => {
@@ -486,11 +536,7 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
                                     }
 
                                     // Trigger 350ms debounce
-                                    let tx = debounce_tx.clone();
-                                    std::thread::spawn(move || {
-                                        std::thread::sleep(Duration::from_millis(350));
-                                        let _ = tx.send(DebounceEvent { uri, version });
-                                    });
+                                    let _ = trigger_tx.send(DebounceEvent { uri, version });
                                 }
                             }
                             "textDocument/didSave" => {
