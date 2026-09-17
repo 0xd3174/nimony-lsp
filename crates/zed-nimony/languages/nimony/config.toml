@@ -1,0 +1,15 @@
+name = "Nimony"
+grammar = "nim"
+path_suffixes = ["nim", "nims", "nimble"]
+line_comments = ["# "]
+block_comment = ["#[", "]#"]
+
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+    { start = "\"", end = "\"", close = true, newline = false },
+    { start = "'", end = "'", close = true, newline = false }
+]
+
+autoclose_before = ";:.,=}])> \n\t"
