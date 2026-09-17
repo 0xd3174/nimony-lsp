@@ -17,25 +17,22 @@ impl zed::Extension for NimonyExtension {
             .ok()
             .and_then(|lsp_settings| lsp_settings.binary);
 
-        let binary_args = binary_settings
-            .as_ref()
-            .and_then(|binary_settings| binary_settings.arguments.clone());
+        let (path, args) = if let Some(settings) = binary_settings {
+            (settings.path, settings.arguments.unwrap_or_default())
+        } else {
+            (None, Vec::new())
+        };
 
-        if let Some(path) = binary_settings.and_then(|binary_settings| binary_settings.path) {
-            return Ok(zed::Command {
-                command: path,
-                args: binary_args.unwrap_or_default(),
-                env: Default::default(),
-            });
-        }
-
-        let path = worktree
-            .which("nimony-lsp")
-            .ok_or_else(|| "nimony-lsp binary not found in PATH. Ensure nimony-lsp is installed or configured in Zed settings.".to_string())?;
+        let command = match path {
+            Some(p) => p,
+            None => worktree
+                .which("nimony-lsp")
+                .ok_or_else(|| "nimony-lsp binary not found in PATH. Ensure nimony-lsp is installed or configured in Zed settings.".to_string())?,
+        };
 
         Ok(zed::Command {
-            command: path,
-            args: binary_args.unwrap_or_default(),
+            command,
+            args,
             env: Default::default(),
         })
     }
