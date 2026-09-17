@@ -1,9 +1,9 @@
-.PHONY: all lsp lsp-dev zed check test test-e2e install-lsp clean help
+.PHONY: all lsp lsp-dev zed package-zed check test test-e2e install-lsp clean help
 
 CARGO ?= cargo
 PREFIX ?= $(HOME)/.local
 BIN_DIR ?= $(PREFIX)/bin
-TARGET_WASM = wasm32-wasip1
+TARGET_WASM ?= wasm32-wasip2
 
 all: lsp zed ## Build both nimony-lsp and zed-nimony (release)
 
@@ -13,8 +13,20 @@ lsp: ## Build nimony-lsp native binary in release mode
 lsp-dev: ## Build nimony-lsp native binary in dev mode
 	$(CARGO) build -p nimony-lsp
 
-zed: ## Build zed-nimony extension in release mode (wasm32-wasip1)
+zed: ## Build zed-nimony extension in release mode (wasm32-wasip2)
 	$(CARGO) build -p zed-nimony --target $(TARGET_WASM) --release
+
+package-zed: zed ## Package precompiled Zed extension into dist/nimony-extension.tar.gz
+	@rm -rf dist/nimony
+	@mkdir -p dist/nimony/languages dist/nimony/grammars
+	@cp crates/zed-nimony/extension.toml dist/nimony/
+	@cp target/$(TARGET_WASM)/release/zed_nimony.wasm dist/nimony/extension.wasm
+	@cp -r crates/zed-nimony/languages/* dist/nimony/languages/
+	@if [ -f crates/zed-nimony/grammars/nim.wasm ]; then \
+		cp crates/zed-nimony/grammars/nim.wasm dist/nimony/grammars/; \
+	fi
+	@tar -czf dist/nimony-extension.tar.gz -C dist nimony
+	@echo "Created precompiled Zed extension bundle at dist/nimony-extension.tar.gz"
 
 check: ## Run cargo check across all workspace members
 	$(CARGO) check --workspace
@@ -32,6 +44,7 @@ install-lsp: lsp ## Install nimony-lsp to $(BIN_DIR)
 
 clean: ## Remove build artifacts
 	$(CARGO) clean
+	rm -rf dist
 	rm -f tests/e2e/harness/lsp_client
 	rm -f crates/zed-nimony/extension.wasm
 
