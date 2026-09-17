@@ -162,6 +162,7 @@ impl NavigationEngine {
     }
 
     /// textDocument/references
+    #[allow(clippy::too_many_arguments)]
     pub fn find_references(
         &self,
         doc_path: &Path,

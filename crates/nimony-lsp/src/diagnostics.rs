@@ -193,14 +193,12 @@ impl DiagnosticEngine {
             .current_dir(cwd)
             .output();
 
-        let combined = match output {
-            Ok(out) => format!(
-                "{}\n{}",
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            ),
-            Err(e) => return Err(e),
-        };
+        let out = output?;
+        let combined = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
 
         Ok(Self::parse_compiler_output(
             &combined,

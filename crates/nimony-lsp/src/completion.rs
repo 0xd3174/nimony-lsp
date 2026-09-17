@@ -191,48 +191,47 @@ impl CompletionEngine {
 
         // 1. Keywords
         for &kw in NIM_KEYWORDS {
-            if prefix_lower.is_empty() || kw.to_lowercase().starts_with(&prefix_lower) {
-                if seen_labels.insert(kw.to_string()) {
-                    items.push(CompletionItem {
-                        label: kw.to_string(),
-                        kind: Some(CompletionItemKind::KEYWORD),
-                        detail: Some("Nim keyword".to_string()),
-                        ..Default::default()
-                    });
-                }
+            if (prefix_lower.is_empty() || kw.to_lowercase().starts_with(&prefix_lower))
+                && seen_labels.insert(kw.to_string())
+            {
+                items.push(CompletionItem {
+                    label: kw.to_string(),
+                    kind: Some(CompletionItemKind::KEYWORD),
+                    detail: Some("Nim keyword".to_string()),
+                    ..Default::default()
+                });
             }
         }
 
         // 2. Built-in types
         for &(ty, desc) in BUILTIN_TYPES {
-            if prefix_lower.is_empty() || ty.to_lowercase().starts_with(&prefix_lower) {
-                if seen_labels.insert(ty.to_string()) {
-                    items.push(CompletionItem {
-                        label: ty.to_string(),
-                        kind: Some(CompletionItemKind::CLASS),
-                        detail: Some(desc.to_string()),
-                        ..Default::default()
-                    });
-                }
+            if (prefix_lower.is_empty() || ty.to_lowercase().starts_with(&prefix_lower))
+                && seen_labels.insert(ty.to_string())
+            {
+                items.push(CompletionItem {
+                    label: ty.to_string(),
+                    kind: Some(CompletionItemKind::CLASS),
+                    detail: Some(desc.to_string()),
+                    ..Default::default()
+                });
             }
         }
 
         // 3. Snippets
         for snip in SNIPPETS {
-            if prefix_lower.is_empty()
+            if (prefix_lower.is_empty()
                 || snip.trigger.to_lowercase().starts_with(&prefix_lower)
-                || snip.label.to_lowercase().starts_with(&prefix_lower)
+                || snip.label.to_lowercase().starts_with(&prefix_lower))
+                && seen_labels.insert(snip.label.to_string())
             {
-                if seen_labels.insert(snip.label.to_string()) {
-                    items.push(CompletionItem {
-                        label: snip.label.to_string(),
-                        kind: Some(CompletionItemKind::SNIPPET),
-                        detail: Some(snip.detail.to_string()),
-                        insert_text: Some(snip.insert_text.to_string()),
-                        insert_text_format: Some(InsertTextFormat::SNIPPET),
-                        ..Default::default()
-                    });
-                }
+                items.push(CompletionItem {
+                    label: snip.label.to_string(),
+                    kind: Some(CompletionItemKind::SNIPPET),
+                    detail: Some(snip.detail.to_string()),
+                    insert_text: Some(snip.insert_text.to_string()),
+                    insert_text_format: Some(InsertTextFormat::SNIPPET),
+                    ..Default::default()
+                });
             }
         }
 
@@ -241,18 +240,17 @@ impl CompletionEngine {
             let name = cap.get(1).map(|m| m.as_str()).unwrap_or("");
             if !name.is_empty()
                 && (prefix_lower.is_empty() || name.to_lowercase().starts_with(&prefix_lower))
+                && seen_labels.insert(name.to_string())
             {
-                if seen_labels.insert(name.to_string()) {
-                    let params = cap.get(2).map(|m| m.as_str()).unwrap_or("()");
-                    let ret = cap.get(3).map(|m| m.as_str()).unwrap_or("void");
-                    let detail = format!("proc{}: {}", params, ret);
-                    items.push(CompletionItem {
-                        label: name.to_string(),
-                        kind: Some(CompletionItemKind::FUNCTION),
-                        detail: Some(detail),
-                        ..Default::default()
-                    });
-                }
+                let params = cap.get(2).map(|m| m.as_str()).unwrap_or("()");
+                let ret = cap.get(3).map(|m| m.as_str()).unwrap_or("void");
+                let detail = format!("proc{}: {}", params, ret);
+                items.push(CompletionItem {
+                    label: name.to_string(),
+                    kind: Some(CompletionItemKind::FUNCTION),
+                    detail: Some(detail),
+                    ..Default::default()
+                });
             }
         }
 
@@ -260,15 +258,14 @@ impl CompletionEngine {
             let name = cap.get(1).map(|m| m.as_str()).unwrap_or("");
             if !name.is_empty()
                 && (prefix_lower.is_empty() || name.to_lowercase().starts_with(&prefix_lower))
+                && seen_labels.insert(name.to_string())
             {
-                if seen_labels.insert(name.to_string()) {
-                    items.push(CompletionItem {
-                        label: name.to_string(),
-                        kind: Some(CompletionItemKind::STRUCT),
-                        detail: Some(format!("type {} = object", name)),
-                        ..Default::default()
-                    });
-                }
+                items.push(CompletionItem {
+                    label: name.to_string(),
+                    kind: Some(CompletionItemKind::STRUCT),
+                    detail: Some(format!("type {} = object", name)),
+                    ..Default::default()
+                });
             }
         }
 
@@ -276,17 +273,16 @@ impl CompletionEngine {
             let name = cap.get(1).map(|m| m.as_str()).unwrap_or("");
             if !name.is_empty()
                 && (prefix_lower.is_empty() || name.to_lowercase().starts_with(&prefix_lower))
+                && seen_labels.insert(name.to_string())
             {
-                if seen_labels.insert(name.to_string()) {
-                    let ty = cap.get(2).map(|m| m.as_str()).unwrap_or("auto");
-                    let detail = format!("field {}: {}", name, ty.trim());
-                    items.push(CompletionItem {
-                        label: name.to_string(),
-                        kind: Some(CompletionItemKind::FIELD),
-                        detail: Some(detail),
-                        ..Default::default()
-                    });
-                }
+                let ty = cap.get(2).map(|m| m.as_str()).unwrap_or("auto");
+                let detail = format!("field {}: {}", name, ty.trim());
+                items.push(CompletionItem {
+                    label: name.to_string(),
+                    kind: Some(CompletionItemKind::FIELD),
+                    detail: Some(detail),
+                    ..Default::default()
+                });
             }
         }
 
@@ -294,17 +290,16 @@ impl CompletionEngine {
             let name = cap.get(1).map(|m| m.as_str()).unwrap_or("");
             if !name.is_empty()
                 && (prefix_lower.is_empty() || name.to_lowercase().starts_with(&prefix_lower))
+                && seen_labels.insert(name.to_string())
             {
-                if seen_labels.insert(name.to_string()) {
-                    let ty = cap.get(2).map(|m| m.as_str()).unwrap_or("auto");
-                    let detail = format!("let {}: {}", name, ty);
-                    items.push(CompletionItem {
-                        label: name.to_string(),
-                        kind: Some(CompletionItemKind::VARIABLE),
-                        detail: Some(detail),
-                        ..Default::default()
-                    });
-                }
+                let ty = cap.get(2).map(|m| m.as_str()).unwrap_or("auto");
+                let detail = format!("let {}: {}", name, ty);
+                items.push(CompletionItem {
+                    label: name.to_string(),
+                    kind: Some(CompletionItemKind::VARIABLE),
+                    detail: Some(detail),
+                    ..Default::default()
+                });
             }
         }
 
