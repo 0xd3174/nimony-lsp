@@ -1,6 +1,6 @@
 # Build artifacts
 /target/
-/nimcache/
+nimcache/
 result
 result-*
 *.wasm
@@ -16,3 +16,12 @@ _tmp_*.nim
 .idea/
 *.swp
 *~
+
+# Test harness binary
+tests/e2e/harness/lsp_client
+
+# Agent & task coordination metadata
+.agents/
+ORIGINAL_REQUEST.md
+TEST_INFRA.md
+TEST_READY.md
