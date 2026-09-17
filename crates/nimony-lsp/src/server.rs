@@ -21,7 +21,7 @@ pub struct Document {
     pub uri: Url,
     pub path: PathBuf,
     pub version: i32,
-    pub text: String,
+    pub text: Arc<str>,
     pub line_index: LineIndex,
 }
 
@@ -35,35 +35,37 @@ impl Document {
             uri,
             path,
             version,
-            text,
+            text: text.into(),
             line_index,
         }
     }
 
     pub fn apply_changes(&mut self, version: i32, changes: Vec<TextDocumentContentChangeEvent>) {
         self.version = version;
+        let mut text = self.text.to_string();
         for change in changes {
             match change.range {
                 Some(range) => {
-                    let start_byte = self.line_index.lsp_pos_to_byte_offset(&self.text, range.start);
-                    let end_byte = self.line_index.lsp_pos_to_byte_offset(&self.text, range.end);
+                    let start_byte = self.line_index.lsp_pos_to_byte_offset(&text, range.start);
+                    let end_byte = self.line_index.lsp_pos_to_byte_offset(&text, range.end);
 
-                    let start = start_byte.min(self.text.len());
-                    let end = end_byte.min(self.text.len());
+                    let start = start_byte.min(text.len());
+                    let end = end_byte.min(text.len());
                     let (start, end) = if start <= end { (start, end) } else { (end, start) };
 
-                    let start = clamp_char_boundary(&self.text, start);
-                    let end = clamp_char_boundary(&self.text, end);
+                    let start = clamp_char_boundary(&text, start);
+                    let end = clamp_char_boundary(&text, end);
 
-                    self.text.replace_range(start..end, &change.text);
-                    self.line_index = LineIndex::new(&self.text);
+                    text.replace_range(start..end, &change.text);
+                    self.line_index = LineIndex::new(&text);
                 }
                 None => {
-                    self.text = change.text;
-                    self.line_index = LineIndex::new(&self.text);
+                    text = change.text;
+                    self.line_index = LineIndex::new(&text);
                 }
             }
         }
+        self.text = text.into();
     }
 }
 
@@ -73,6 +75,25 @@ fn clamp_char_boundary(s: &str, mut idx: usize) -> usize {
         idx -= 1;
     }
     idx
+}
+
+fn get_doc_or_read(documents: &HashMap<Url, Document>, uri: &Url) -> (PathBuf, Arc<str>) {
+    if let Some(doc) = documents.get(uri) {
+        (doc.path.clone(), Arc::clone(&doc.text))
+    } else {
+        let p = uri.to_file_path().unwrap_or_else(|_| PathBuf::from(uri.path()));
+        let t: Arc<str> = std::fs::read_to_string(&p).unwrap_or_default().into();
+        (p, t)
+    }
+}
+
+fn get_text_or_read(documents: &HashMap<Url, Document>, uri: &Url) -> Arc<str> {
+    if let Some(doc) = documents.get(uri) {
+        Arc::clone(&doc.text)
+    } else {
+        let p = uri.to_file_path().unwrap_or_else(|_| PathBuf::from(uri.path()));
+        std::fs::read_to_string(&p).unwrap_or_default().into()
+    }
 }
 
 pub fn server_capabilities() -> ServerCapabilities {
@@ -312,13 +333,7 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
                                 if let Ok(params) = serde_json::from_value::<GotoDefinitionParams>(req.params) {
                                     let uri = params.text_document_position_params.text_document.uri;
                                     let pos = params.text_document_position_params.position;
-                                    let (path, text) = if let Some(doc) = state.documents.get(&uri) {
-                                        (doc.path.clone(), doc.text.clone())
-                                    } else {
-                                        let p = uri.to_file_path().unwrap_or_else(|_| PathBuf::from(uri.path()));
-                                        let t = std::fs::read_to_string(&p).unwrap_or_default();
-                                        (p, t)
-                                    };
+                                    let (path, text) = get_doc_or_read(&state.documents, &uri);
                                     let nav = state.nav_engine.clone();
                                     let root = state.project_root.clone();
                                     let sender = connection.sender.clone();
@@ -347,13 +362,7 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
                                     let uri = params.text_document_position.text_document.uri;
                                     let pos = params.text_document_position.position;
                                     let inc_decl = params.context.include_declaration;
-                                    let (path, text) = if let Some(doc) = state.documents.get(&uri) {
-                                        (doc.path.clone(), doc.text.clone())
-                                    } else {
-                                        let p = uri.to_file_path().unwrap_or_else(|_| PathBuf::from(uri.path()));
-                                        let t = std::fs::read_to_string(&p).unwrap_or_default();
-                                        (p, t)
-                                    };
+                                    let (path, text) = get_doc_or_read(&state.documents, &uri);
                                     let nav = state.nav_engine.clone();
                                     let root = state.project_root.clone();
                                     let sender = connection.sender.clone();
@@ -381,13 +390,7 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
                                 if let Ok(params) = serde_json::from_value::<HoverParams>(req.params) {
                                     let uri = params.text_document_position_params.text_document.uri;
                                     let pos = params.text_document_position_params.position;
-                                    let (path, text) = if let Some(doc) = state.documents.get(&uri) {
-                                        (doc.path.clone(), doc.text.clone())
-                                    } else {
-                                        let p = uri.to_file_path().unwrap_or_else(|_| PathBuf::from(uri.path()));
-                                        let t = std::fs::read_to_string(&p).unwrap_or_default();
-                                        (p, t)
-                                    };
+                                    let (path, text) = get_doc_or_read(&state.documents, &uri);
                                     let nav = state.nav_engine.clone();
                                     let root = state.project_root.clone();
                                     let sender = connection.sender.clone();
@@ -411,12 +414,7 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
                                 if let Ok(params) = serde_json::from_value::<DocumentHighlightParams>(req.params) {
                                     let uri = params.text_document_position_params.text_document.uri;
                                     let pos = params.text_document_position_params.position;
-                                    let text = if let Some(doc) = state.documents.get(&uri) {
-                                        doc.text.clone()
-                                    } else {
-                                        let p = uri.to_file_path().unwrap_or_else(|_| PathBuf::from(uri.path()));
-                                        std::fs::read_to_string(&p).unwrap_or_default()
-                                    };
+                                    let text = get_text_or_read(&state.documents, &uri);
                                     let resp = match state.nav_engine.document_highlight(&text, pos) {
                                         Ok(res) => Response::new_ok(req.id, res),
                                         Err(e) => Response::new_err(req.id, ErrorCode::InternalError as i32, e),
@@ -428,12 +426,7 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
                                 if let Ok(params) = serde_json::from_value::<CompletionParams>(req.params) {
                                     let uri = params.text_document_position.text_document.uri;
                                     let pos = params.text_document_position.position;
-                                    let text = if let Some(doc) = state.documents.get(&uri) {
-                                        doc.text.clone()
-                                    } else {
-                                        let p = uri.to_file_path().unwrap_or_else(|_| PathBuf::from(uri.path()));
-                                        std::fs::read_to_string(&p).unwrap_or_default()
-                                    };
+                                    let text = get_text_or_read(&state.documents, &uri);
                                     let items = state.completion_engine.complete(&text, pos);
                                     let resp = Response::new_ok(req.id, items);
                                     connection.sender.send(resp.into())?;
@@ -446,12 +439,7 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
                                 }
                                 if let Ok(params) = serde_json::from_value::<DocumentFormattingParams>(req.params) {
                                     let uri = params.text_document.uri;
-                                    let text = if let Some(doc) = state.documents.get(&uri) {
-                                        doc.text.clone()
-                                    } else {
-                                        let p = uri.to_file_path().unwrap_or_else(|_| PathBuf::from(uri.path()));
-                                        std::fs::read_to_string(&p).unwrap_or_default()
-                                    };
+                                    let text = get_text_or_read(&state.documents, &uri);
                                     let formatter = state.formatting_engine.clone();
                                     let sender = connection.sender.clone();
                                     let in_flight = state.in_flight.clone();
@@ -543,10 +531,10 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
                                 if let Ok(params) = serde_json::from_value::<DidSaveTextDocumentParams>(notif.params) {
                                     let uri = params.text_document.uri;
                                     let (path, text, version) = if let Some(doc) = state.documents.get(&uri) {
-                                        (doc.path.clone(), doc.text.clone(), doc.version)
+                                        (doc.path.clone(), Arc::clone(&doc.text), doc.version)
                                     } else {
                                         let path = uri.to_file_path().unwrap_or_else(|_| PathBuf::from(uri.path()));
-                                        let text = std::fs::read_to_string(&path).unwrap_or_default();
+                                        let text: Arc<str> = std::fs::read_to_string(&path).unwrap_or_default().into();
                                         (path, text, 0)
                                     };
 
