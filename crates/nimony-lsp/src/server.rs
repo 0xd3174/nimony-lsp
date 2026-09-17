@@ -152,11 +152,27 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
         Ok(pair) => pair,
         Err(e) => {
             let msg = format!("{e}");
-            if msg.contains("malformed") || msg.contains("key must be a string") || msg.contains("invalid JSON") {
-                eprintln!("Parse error: {e}");
+            let code = if msg.contains("malformed")
+                || msg.contains("key must be a string")
+                || msg.contains("invalid JSON")
+                || msg.contains("syntax")
+                || msg.contains("expected")
+                || msg.contains("channel is closed")
+                || msg.contains("disconnected")
+            {
+                ErrorCode::ParseError as i32
             } else {
-                eprintln!("Invalid Request: {e}");
-            }
+                ErrorCode::InvalidRequest as i32
+            };
+            let err_msg = if code == ErrorCode::ParseError as i32 {
+                "Parse error"
+            } else {
+                "Invalid Request"
+            };
+            let resp = Response::new_err(RequestId::from(0), code, err_msg.to_string());
+            let _ = connection.sender.send(Message::Response(resp));
+            drop(connection);
+            std::thread::sleep(Duration::from_millis(50));
             return Ok(());
         }
     };

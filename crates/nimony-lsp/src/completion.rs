@@ -235,7 +235,7 @@ impl CompletionEngine {
         }
 
         let type_regex = Regex::new(
-            r"(?m)^\s*([a-zA-Z_][a-zA-Z0-9_]*)\*?\s*=\s*(?:object|enum|concept|ref|ptr|distinct)",
+            r"(?m)^\s*([a-zA-Z_][a-zA-Z0-9_]*)\*?(?:\[[^\]]+\])?\s*=\s*(?:object|enum|concept|ref|ptr|distinct)",
         )
         .unwrap();
 
@@ -249,6 +249,29 @@ impl CompletionEngine {
                         label: name.to_string(),
                         kind: Some(CompletionItemKind::STRUCT),
                         detail: Some(format!("type {} = object", name)),
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+
+        let field_regex = Regex::new(
+            r"(?m)^\s+([a-zA-Z_][a-zA-Z0-9_]*)\*?\s*:\s*([a-zA-Z0-9_\[\],\s]+)",
+        )
+        .unwrap();
+
+        for cap in field_regex.captures_iter(doc_text) {
+            let name = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+            if !name.is_empty()
+                && (prefix_lower.is_empty() || name.to_lowercase().starts_with(&prefix_lower))
+            {
+                if seen_labels.insert(name.to_string()) {
+                    let ty = cap.get(2).map(|m| m.as_str()).unwrap_or("auto");
+                    let detail = format!("field {}: {}", name, ty.trim());
+                    items.push(CompletionItem {
+                        label: name.to_string(),
+                        kind: Some(CompletionItemKind::FIELD),
+                        detail: Some(detail),
                         ..Default::default()
                     });
                 }
@@ -343,5 +366,13 @@ mod tests {
 
         let items2 = engine.complete(doc, Position::new(1, 10));
         assert!(items2.iter().any(|i| i.label == "int"));
+    }
+
+    #[test]
+    fn test_generic_field_completion() {
+        let engine = CompletionEngine::new();
+        let doc = "type Box[T] = object\n  item: T\nlet b = Box[int](it";
+        let items = engine.complete(doc, Position::new(2, 20));
+        assert!(items.iter().any(|i| i.label == "item" && i.kind == Some(CompletionItemKind::FIELD)));
     }
 }
