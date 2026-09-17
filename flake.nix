@@ -97,7 +97,10 @@
           };
           nimony = self.packages.${system}.nimony;
           rustToolchain = pkgs.rust-bin.stable.latest.default.override {
-            targets = [ "wasm32-wasip1" ];
+            targets = [
+              "wasm32-wasip1"
+              "wasm32-wasip2"
+            ];
           };
         in
         {
