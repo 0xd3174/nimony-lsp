@@ -1,0 +1,135 @@
+name: CI & Release
+
+on:
+  push:
+    branches: [ master, main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ master, main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Test Workspace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Cargo Check
+        run: cargo check --workspace --all-targets
+
+      - name: Cargo Test
+        run: cargo test --workspace --verbose
+
+  build-lsp:
+    name: Build nimony-lsp (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bin_name: nimony-lsp
+            asset_name: nimony-lsp-linux-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bin_name: nimony-lsp
+            asset_name: nimony-lsp-macos-arm64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            bin_name: nimony-lsp
+            asset_name: nimony-lsp-macos-x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin_name: nimony-lsp.exe
+            asset_name: nimony-lsp-windows-x86_64.exe
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build nimony-lsp binary
+        run: cargo build -p nimony-lsp --release --target ${{ matrix.target }}
+
+      - name: Prepare binary artifact
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          cp target/${{ matrix.target }}/release/${{ matrix.bin_name }} artifacts/${{ matrix.asset_name }}
+
+      - name: Upload Binary Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: artifacts/${{ matrix.asset_name }}
+          if-no-files-found: error
+
+  build-zed-extension:
+    name: Build Zed Extension Bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm32-wasip2
+
+      - name: Install zip tool
+        run: sudo apt-get update && sudo apt-get install -y zip
+
+      - name: Package Zed Extension
+        run: make package-zed
+
+      - name: Upload Zed Extension tar.gz
+        uses: actions/upload-artifact@v4
+        with:
+          name: nimony-extension-tar-gz
+          path: dist/nimony-extension.tar.gz
+          if-no-files-found: error
+
+      - name: Upload Zed Extension zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: nimony-extension-zip
+          path: dist/nimony-extension.zip
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    needs: [ test, build-lsp, build-zed-extension ]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Flatten release artifacts
+        run: |
+          mkdir -p dist-release
+          find release-artifacts -type f -exec cp {} dist-release/ \;
+          ls -la dist-release/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-release/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false

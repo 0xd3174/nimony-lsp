@@ -17,6 +17,7 @@ zed: ## Build zed-nimony extension in release mode (wasm32-wasip2)
 	$(CARGO) build -p zed-nimony --target $(TARGET_WASM) --release
 
 package-zed: zed ## Package precompiled Zed extension into dist/nimony-extension.tar.gz
+	@bash scripts/build_grammar.sh
 	@rm -rf dist/nimony
 	@mkdir -p dist/nimony/languages dist/nimony/grammars
 	@cp crates/zed-nimony/extension.toml dist/nimony/
@@ -26,6 +27,9 @@ package-zed: zed ## Package precompiled Zed extension into dist/nimony-extension
 		cp crates/zed-nimony/grammars/nim.wasm dist/nimony/grammars/; \
 	fi
 	@tar -czf dist/nimony-extension.tar.gz -C dist nimony
+	@if command -v zip >/dev/null 2>&1; then \
+		(cd dist && zip -rq nimony-extension.zip nimony); \
+	fi
 	@echo "Created precompiled Zed extension bundle at dist/nimony-extension.tar.gz"
 
 check: ## Run cargo check across all workspace members

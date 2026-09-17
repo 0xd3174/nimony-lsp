@@ -1,5 +1,6 @@
 # Nimony LSP & Zed Extension
 
+[![CI](https://github.com/nim-lang/nimony-lsp/actions/workflows/ci.yml/badge.svg)](https://github.com/nim-lang/nimony-lsp/actions/workflows/ci.yml)
 [![Tests](https://img.shields.io/badge/E2E%20Tests-94%2F94%20PASS-brightgreen)](tests/e2e/run_tests.sh)
 [![Unit Tests](https://img.shields.io/badge/Unit%20Tests-25%2F25%20PASS-brightgreen)](crates/nimony-lsp)
 [![Target](https://img.shields.io/badge/Zed%20WASM-wasm32--wasip2-blue)](crates/zed-nimony)
@@ -95,6 +96,24 @@ nimony-lsp/
 ---
 
 ## Installation & Setup Guide
+
+### 0. Precompiled Binaries & Zed Extension Bundle (No Rust Required)
+
+If you don't want to compile from source, pre-built native binaries and Zed WASM bundles are published automatically by GitHub Actions for every release:
+
+1. **Download `nimony-lsp`:**
+   - Grab the binary for your platform (`Linux x86_64`, `macOS arm64/x86_64`, `Windows x86_64`) from [GitHub Releases](https://github.com/nim-lang/nimony-lsp/releases).
+   - Place it into your `PATH` (e.g. `~/.local/bin/nimony-lsp` or `C:\Program Files\nimony-lsp\nimony-lsp.exe`).
+2. **Download Zed Extension Bundle:**
+   - Grab `nimony-extension.tar.gz` (or `.zip` for Windows).
+   - Extract it.
+   - In Zed, press `Ctrl+Shift+P` (or `Cmd+Shift+P`) and choose `zed: install dev extension`, then select the extracted `nimony` directory.
+   - *Alternative:* Simply move the extracted `nimony` folder into:
+     - Linux: `~/.local/share/zed/extensions/installed/nimony`
+     - macOS: `~/Library/Application Support/Zed/extensions/installed/nimony`
+     - Windows: `%LOCALAPPDATA%\Zed\extensions\installed\nimony`
+
+---
 
 ### 1. Nix / NixOS (Declarative)
 
