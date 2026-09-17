@@ -1,6 +1,6 @@
 # Nimony LSP & Zed Extension
 
-[![CI](https://github.com/nim-lang/nimony-lsp/actions/workflows/ci.yml/badge.svg)](https://github.com/nim-lang/nimony-lsp/actions/workflows/ci.yml)
+[![CI](https://github.com/0xd3174/nimony-lsp/actions/workflows/ci.yml/badge.svg)](https://github.com/0xd3174/nimony-lsp/actions/workflows/ci.yml)
 [![Tests](https://img.shields.io/badge/E2E%20Tests-94%2F94%20PASS-brightgreen)](tests/e2e/run_tests.sh)
 [![Unit Tests](https://img.shields.io/badge/Unit%20Tests-25%2F25%20PASS-brightgreen)](crates/nimony-lsp)
 [![Target](https://img.shields.io/badge/Zed%20WASM-wasm32--wasip2-blue)](crates/zed-nimony)
@@ -97,7 +97,7 @@ nimony-lsp/
 
 ## Installation
 
-Precompiled binaries and extension bundles are provided under [Releases](https://github.com/nim-lang/nimony-lsp/releases).
+Precompiled binaries and extension bundles are provided under [Releases](https://github.com/0xd3174/nimony-lsp/releases).
 
 ### 1. Download Executables
 Download the `nimony-lsp` binary for your platform:

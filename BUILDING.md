@@ -81,7 +81,7 @@ nimony --help
 nimpretty --version
 
 # 4. Clone and build
-git clone https://github.com/nim-lang/nimony-lsp.git
+git clone https://github.com/0xd3174/nimony-lsp.git
 cd nimony-lsp
 make all
 
