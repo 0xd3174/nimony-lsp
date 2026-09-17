@@ -95,169 +95,44 @@ nimony-lsp/
 
 ---
 
-## Installation & Setup Guide
+## Quick Installation (Zero-Setup / Pre-built)
 
-### 0. Precompiled Binaries & Zed Extension Bundle (No Rust Required)
+For everyday usage, you **do not need Rust, compilers, or build tools**. Everything is precompiled and published on [GitHub Releases](https://github.com/nim-lang/nimony-lsp/releases).
 
-If you don't want to compile from source, pre-built native binaries and Zed WASM bundles are published automatically by GitHub Actions for every release:
+### Step 1: Download Prebuilt Files
+From the latest [GitHub Releases](https://github.com/nim-lang/nimony-lsp/releases), download:
+1. **The LSP Server Binary** for your OS:
+   - Linux: `nimony-lsp-linux-x86_64`
+   - macOS: `nimony-lsp-macos-arm64` (Apple Silicon M1-M4) or `nimony-lsp-macos-x86_64` (Intel)
+   - Windows: `nimony-lsp-windows-x86_64.exe`
+2. **The Zed Extension Bundle:**
+   - `nimony-extension.tar.gz` (Linux / macOS) or `nimony-extension.zip` (Windows)
 
-1. **Download `nimony-lsp`:**
-   - Grab the binary for your platform (`Linux x86_64`, `macOS arm64/x86_64`, `Windows x86_64`) from [GitHub Releases](https://github.com/nim-lang/nimony-lsp/releases).
-   - Place it into your `PATH` (e.g. `~/.local/bin/nimony-lsp` or `C:\Program Files\nimony-lsp\nimony-lsp.exe`).
-2. **Download Zed Extension Bundle:**
-   - Grab `nimony-extension.tar.gz` (or `.zip` for Windows).
-   - Extract it.
-   - In Zed, press `Ctrl+Shift+P` (or `Cmd+Shift+P`) and choose `zed: install dev extension`, then select the extracted `nimony` directory.
-   - *Alternative:* Simply move the extracted `nimony` folder into:
-     - Linux: `~/.local/share/zed/extensions/installed/nimony`
-     - macOS: `~/Library/Application Support/Zed/extensions/installed/nimony`
-     - Windows: `%LOCALAPPDATA%\Zed\extensions\installed\nimony`
+Make the binary executable on Linux/macOS (`chmod +x nimony-lsp-*`) and place it in your `$PATH` (e.g. `~/.local/bin/nimony-lsp` or `/usr/local/bin/nimony-lsp`).
 
 ---
 
-### 1. Nix / NixOS (Declarative)
+### Step 2: Install Extension in Zed
+Extract the downloaded extension bundle (`nimony-extension.tar.gz` or `.zip`). Inside you'll find a `nimony` folder.
 
-On NixOS or systems using the Nix package manager, all dependencies (compiler, Rust toolchain with WebAssembly targets, and dependencies) are declared in `flake.nix` and `shell.nix`.
-
-#### Entering the Environment
-```bash
-# Recommended (Nix Flakes):
-nix develop
-
-# Or classic nix-shell (supported via shell.nix):
-nix-shell
-```
-
-#### Building
-Inside the Nix environment, simply run:
-```bash
-make all
-# or manually:
-cargo build -p nimony-lsp --release
-cargo build -p zed-nimony --target wasm32-wasip2 --release
-```
-
-#### Installing in Zed on NixOS
-Because Zed requires `rustc` and the `wasm32-wasip2` target to compile dev extensions, **launch Zed from the Nix environment** so it inherits the correct `PATH`:
-```bash
-nix develop -c zeditor /path/to/nimony-lsp
-```
-Then inside Zed:
-1. Press `Ctrl+Shift+P` (Command Palette).
-2. Type and select `zed: install dev extension`.
-3. Choose the directory: `crates/zed-nimony` (e.g. `/home/delta/code/nimony-lsp/crates/zed-nimony`).
-4. Zed will automatically compile the extension and tree-sitter Nim grammar (~60-70 seconds on first run as it caches `wasi-sdk`). Once installed, the extension is saved permanently in `~/.local/share/zed/extensions/`.
-
-#### Adding `nimony-lsp` to PATH on NixOS
-- **Fish Shell:**
-  ```fish
-  fish_add_path ~/.local/bin
-  make install-lsp
-  ```
-- **NixOS configuration (`/etc/nixos/configuration.nix`):**
-  ```nix
-  environment.localBinInPath = true; # Adds ~/.local/bin to PATH for all users
-  ```
-- **Direnv (Per-Project):**
-  ```bash
-  echo "use flake /path/to/nimony-lsp" > .envrc
-  direnv allow
-  ```
-
----
-
-### 2. Standard Linux (Ubuntu, Debian, Arch, Fedora)
-
-#### Prerequisites
-1. **Rust Toolchain:** Install via [rustup](https://rustup.rs):
-   ```bash
-   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-   source "$HOME/.cargo/env"
-   ```
-2. **WebAssembly Targets:** Zed requires `wasm32-wasip2` (and `wasm32-wasip1`):
-   ```bash
-   rustup target add wasm32-wasip2 wasm32-wasip1
-   ```
-3. **Nimony & Nimpretty:**
-   Ensure `nimony` and `nimpretty` (Nim 2.0+) are installed and in your `PATH`:
-   ```bash
-   # Verify compiler availability
-   nimony --help
-   nimpretty --version
-   ```
-
-#### Building & Installing
-```bash
-# Clone the repository
-git clone https://github.com/nim-lang/nimony-lsp.git
-cd nimony-lsp
-
-# Build everything
-make all
-
-# Install binary to ~/.local/bin
-make install-lsp
-```
-
-#### Installing in Zed
+**Option A (Via Zed Command Palette):**
 1. Open Zed.
-2. Press `Ctrl+Shift+P` and choose `zed: install dev extension`.
-3. Select the `crates/zed-nimony` folder inside the cloned repository.
-4. Zed will compile the extension and grammar.
+2. Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on macOS).
+3. Type `zed: install dev extension` and press Enter.
+4. Select the extracted `nimony` directory.
+5. *Done! The extension is installed and ready immediately.*
+
+**Option B (Direct Copy):**
+Alternatively, simply copy the extracted `nimony` folder directly into your Zed extensions directory:
+- **Linux:** `~/.local/share/zed/extensions/installed/nimony`
+- **macOS:** `~/Library/Application Support/Zed/extensions/installed/nimony`
+- **Windows:** `%LOCALAPPDATA%\Zed\extensions\installed\nimony`
 
 ---
 
-### 3. Windows (PowerShell / Command Prompt)
+### Step 3: Configure Zed (`settings.json`)
 
-#### Prerequisites
-1. **Rust Toolchain:** Install `rustup` from [https://rustup.rs](https://rustup.rs) (ensure C++ Build Tools for Visual Studio are installed).
-2. **WebAssembly Targets:** In PowerShell, add the required targets:
-   ```powershell
-   rustup target add wasm32-wasip2 wasm32-wasip1
-   ```
-3. **Nimony Compiler:** Ensure `nimony.exe` and `nimpretty.exe` are in your Windows `%PATH%`.
-
-#### Building
-Open PowerShell in the repository root:
-```powershell
-# Build LSP server
-cargo build -p nimony-lsp --release
-
-# Build Zed extension WASM
-cargo build -p zed-nimony --target wasm32-wasip2 --release
-```
-The compiled server binary will be located at:
-`target\release\nimony-lsp.exe`
-
-#### Installing in Zed on Windows
-1. In Zed, open the Command Palette with `Ctrl+Shift+P`.
-2. Select `zed: install dev extension`.
-3. Browse to and select `crates\zed-nimony` in your cloned folder.
-4. Configure your Zed settings (`%APPDATA%\Zed\settings.json`):
-   *(Note: Use forward slashes `/` in JSON paths on Windows)*
-   ```json
-   {
-     "languages": {
-       "Nimony": {
-         "language_servers": ["nimony-lsp"],
-         "format_on_save": "on"
-       }
-     },
-     "lsp": {
-       "nimony-lsp": {
-         "binary": {
-           "path": "C:/path/to/nimony-lsp/target/release/nimony-lsp.exe"
-         }
-       }
-     }
-   }
-   ```
-
----
-
-## Configuring Zed Editor (`settings.json`)
-
-On Linux/macOS, edit `~/.config/zed/settings.json` (or on Windows `%APPDATA%\Zed\settings.json`):
+Open Zed settings (`Ctrl+,` or `Cmd+,`, or via `Ctrl+Shift+P` $\to$ `zed: open settings`), and add:
 
 ```json
 {
@@ -270,15 +145,31 @@ On Linux/macOS, edit `~/.config/zed/settings.json` (or on Windows `%APPDATA%\Zed
   "lsp": {
     "nimony-lsp": {
       "binary": {
-        // If nimony-lsp is in your PATH (e.g., via make install-lsp), you can omit this block or set:
+        // If nimony-lsp is in your PATH, you can set:
         "path": "nimony-lsp"
-        // Or specify an absolute path to your compiled binary:
-        // "path": "/path/to/nimony-lsp/target/release/nimony-lsp"
+        // Or specify an absolute path to the downloaded binary:
+        // Linux/macOS: "path": "/home/user/.local/bin/nimony-lsp"
+        // Windows:     "path": "C:/Tools/nimony-lsp.exe"
       }
     }
   }
 }
 ```
+
+Open any `.nim`, `.nims`, or `.nimble` file — syntax highlighting, Go to Definition, live error diagnostics, and formatting will work immediately.
+
+---
+
+## Building from Source & Developer Guide
+
+If you want to compile the project yourself, contribute code, or run the test suite:
+
+👉 **See the dedicated [BUILDING.md](BUILDING.md) guide** for:
+- Declarative **Nix & NixOS** workflow (`flake.nix`, `shell.nix`, `direnv`)
+- Compiling from source on standard **Linux**, **macOS**, and **Windows**
+- Compiling the Tree-sitter Nim grammar (`nim.wasm`) via `scripts/build_grammar.sh`
+- Running unit tests and the comprehensive 94-test **5-Tier E2E test suite**
+- Local debugging and verbose LSP logging (`NIMONY_LSP_DEBUG=1`)
 
 ---
 
