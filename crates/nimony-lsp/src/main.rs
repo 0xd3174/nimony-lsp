@@ -7,6 +7,7 @@ mod diagnostics;
 mod formatting;
 mod navigation;
 mod server;
+mod syntax;
 
 fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     if std::env::var("NIMONY_LSP_DEBUG").is_ok() {
