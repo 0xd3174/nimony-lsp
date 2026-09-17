@@ -35,6 +35,7 @@ impl NavShadowGuard {
         let file_name = format!("tmp_nav_{}_{}.nim", suffix, count);
         let path = dir.join(file_name);
         std::fs::write(&path, content)?;
+        crate::diagnostics::register_shadow(path.clone());
         Ok(Self { path })
     }
 
@@ -48,6 +49,7 @@ impl Drop for NavShadowGuard {
         if self.path.exists() {
             let _ = std::fs::remove_file(&self.path);
         }
+        crate::diagnostics::unregister_shadow(&self.path);
     }
 }
 
@@ -282,10 +284,12 @@ impl NavigationEngine {
             }
         }
 
-        // Fallback: in-buffer token search
+        // Fallback: in-buffer token search only if symbol is declared in buffer
         if locations.is_empty() {
-            let in_buf = find_in_buffer_references(doc_text, doc_uri, word, include_declaration);
-            locations.extend(in_buf);
+            if find_in_buffer_declaration(doc_text, doc_uri, word).is_some() {
+                let in_buf = find_in_buffer_references(doc_text, doc_uri, word, include_declaration);
+                locations.extend(in_buf);
+            }
         } else if !include_declaration {
             if let Some(def) = def_loc {
                 locations.retain(|l| {
@@ -768,11 +772,8 @@ pub fn parse_tsv_line(
     }
 
     let start_pos = Position::new(line_0based, utf16_col as u32);
-    let remaining = if (col_0based as usize) < line_str.len() {
-        &line_str[col_0based as usize..]
-    } else {
-        ""
-    };
+    let col_idx = coords::clamp_char_boundary(line_str, col_0based as usize);
+    let remaining = &line_str[col_idx..];
     let token_len: usize = remaining
         .chars()
         .take_while(|c| c.is_alphanumeric() || *c == '_')

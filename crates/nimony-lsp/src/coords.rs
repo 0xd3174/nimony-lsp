@@ -86,6 +86,17 @@ impl LineIndex {
     }
 }
 
+/// Clamps a byte index to the nearest lower char boundary <= index, saturated to s.len().
+pub fn clamp_char_boundary(s: &str, mut index: usize) -> usize {
+    if index >= s.len() {
+        return s.len();
+    }
+    while !s.is_char_boundary(index) {
+        index = index.saturating_sub(1);
+    }
+    index
+}
+
 /// Translate LSP Position (0-based line, UTF-16 code unit offset) into Nimony 1-based (line, UTF-8 byte col).
 pub fn lsp_to_nimony_1based(index: &LineIndex, text: &str, pos: Position) -> (u32, u32) {
     let line_0based = (pos.line as usize).min(index.line_count().saturating_sub(1));
@@ -318,5 +329,20 @@ mod tests {
 
         let offset = lsp_pos_to_byte_offset(&index, text, pos);
         assert_eq!(offset, 0);
+    }
+
+    #[test]
+    fn test_clamp_char_boundary() {
+        let text = "a cafés 🚀 end";
+        assert_eq!(clamp_char_boundary(text, 0), 0);
+        assert_eq!(clamp_char_boundary(text, 5), 5); // start of 'é'
+        assert_eq!(clamp_char_boundary(text, 6), 5); // inside 'é' clamped to 5
+        assert_eq!(clamp_char_boundary(text, 7), 7); // start of 's'
+        assert_eq!(clamp_char_boundary(text, 9), 9); // start of '🚀'
+        assert_eq!(clamp_char_boundary(text, 10), 9); // inside '🚀'
+        assert_eq!(clamp_char_boundary(text, 11), 9); // inside '🚀'
+        assert_eq!(clamp_char_boundary(text, 12), 9); // inside '🚀'
+        assert_eq!(clamp_char_boundary(text, 13), 13); // after '🚀'
+        assert_eq!(clamp_char_boundary(text, 999), text.len()); // out of bounds
     }
 }

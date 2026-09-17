@@ -9,12 +9,16 @@ mod navigation;
 mod server;
 
 fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
-    eprintln!("[nimony-lsp] Starting Nimony Language Server...");
+    if std::env::var("NIMONY_LSP_DEBUG").is_ok() {
+        eprintln!("[nimony-lsp] Starting Nimony Language Server...");
+    }
 
     let (connection, io_threads) = Connection::stdio();
     server::run(connection)?;
-    io_threads.join()?;
+    let _ = io_threads.join();
 
-    eprintln!("[nimony-lsp] Clean exit completed.");
+    if std::env::var("NIMONY_LSP_DEBUG").is_ok() {
+        eprintln!("[nimony-lsp] Clean exit completed.");
+    }
     Ok(())
 }

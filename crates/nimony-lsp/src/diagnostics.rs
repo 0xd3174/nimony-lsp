@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use lsp_types::{
@@ -13,6 +13,45 @@ use lsp_types::{
 use regex::Regex;
 
 use crate::coords::{self, LineIndex};
+
+static ACTIVE_SHADOWS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+pub fn register_shadow(p: PathBuf) {
+    if let Ok(mut l) = ACTIVE_SHADOWS.lock() {
+        l.push(p);
+    }
+}
+
+pub fn unregister_shadow(p: &Path) {
+    if let Ok(mut l) = ACTIVE_SHADOWS.lock() {
+        l.retain(|item| item != p);
+    }
+}
+
+pub fn cleanup_all_active_shadows() {
+    if let Ok(mut l) = ACTIVE_SHADOWS.lock() {
+        for p in l.drain(..) {
+            if p.exists() {
+                let _ = std::fs::remove_file(&p);
+            }
+        }
+    }
+}
+
+pub fn clean_stray_shadow_files(dir: &Path) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    if (name.starts_with("tmp_shadow_") || name.starts_with("tmp_nav_")) && name.ends_with(".nim") {
+                        let _ = std::fs::remove_file(&path);
+                    }
+                }
+            }
+        }
+    }
+}
 
 static SHADOW_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -35,6 +74,7 @@ impl ShadowFileGuard {
         let file_name = format!("tmp_shadow_{}_{}.nim", suffix, count);
         let path = dir.join(file_name);
         std::fs::write(&path, content)?;
+        register_shadow(path.clone());
         Ok(Self { path })
     }
 
@@ -48,6 +88,7 @@ impl Drop for ShadowFileGuard {
         if self.path.exists() {
             let _ = std::fs::remove_file(&self.path);
         }
+        unregister_shadow(&self.path);
     }
 }
 
@@ -223,12 +264,8 @@ impl DiagnosticEngine {
                 );
                 let line_0based = start_pos.line as usize;
                 let line_str = line_index.line_content(line_0based, primary_text);
-                let col_byte = builder.nim_col.saturating_sub(1) as usize;
-                let remaining = if col_byte < line_str.len() {
-                    &line_str[col_byte..]
-                } else {
-                    ""
-                };
+                let col_byte = coords::clamp_char_boundary(line_str, builder.nim_col.saturating_sub(1) as usize);
+                let remaining = &line_str[col_byte..];
                 let token_len: usize = remaining
                     .chars()
                     .take_while(|c| c.is_alphanumeric() || *c == '_')
@@ -257,12 +294,8 @@ impl DiagnosticEngine {
                     );
                     let line_0based = start_pos.line as usize;
                     let line_str = line_index.line_content(line_0based, &content);
-                    let col_byte = builder.nim_col.saturating_sub(1) as usize;
-                    let remaining = if col_byte < line_str.len() {
-                        &line_str[col_byte..]
-                    } else {
-                        ""
-                    };
+                    let col_byte = coords::clamp_char_boundary(line_str, builder.nim_col.saturating_sub(1) as usize);
+                    let remaining = &line_str[col_byte..];
                     let token_len: usize = remaining
                         .chars()
                         .take_while(|c| c.is_alphanumeric() || *c == '_')

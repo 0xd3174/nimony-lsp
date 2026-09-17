@@ -137,22 +137,26 @@ impl CompletionEngine {
         let line_0based = (pos.line as usize).min(line_index.line_count().saturating_sub(1));
         let line_str = line_index.line_content(line_0based, doc_text);
 
-        let target_col = pos.character as usize;
-        let line_prefix = if target_col <= line_str.len() {
-            &line_str[..target_col]
-        } else {
-            line_str
-        };
+        // Extract prefix characters up to pos.character (LSP 0-based UTF-16 code units)
+        let mut prefix_chars = Vec::new();
+        let mut cur_u16 = 0usize;
+        for ch in line_str.chars() {
+            if cur_u16 >= pos.character as usize {
+                break;
+            }
+            cur_u16 += ch.len_utf16();
+            prefix_chars.push(ch);
+        }
 
         // Extract identifier prefix before cursor
-        let prefix = line_prefix
-            .chars()
+        let prefix: String = prefix_chars
+            .into_iter()
             .rev()
             .take_while(|c| c.is_alphanumeric() || *c == '_')
-            .collect::<String>()
-            .chars()
+            .collect::<Vec<_>>()
+            .into_iter()
             .rev()
-            .collect::<String>();
+            .collect();
 
         let prefix_lower = prefix.to_lowercase();
         let mut items = Vec::new();
@@ -312,5 +316,32 @@ mod tests {
         let doc = "let activeUserCount = 99\nlet users = act";
         let items = engine.complete(doc, Position::new(1, 15));
         assert!(items.iter().any(|i| i.label == "activeUserCount"));
+    }
+
+    #[test]
+    fn test_multibyte_utf8_completion() {
+        let engine = CompletionEngine::new();
+        // Line with 2-byte UTF-8 character 'é'
+        // 'let café = 1\n' -> 'é' is at UTF-16 index 7, ends at 8
+        let doc = "let café = 1\nlet x = pr";
+        // Must not panic on character boundary at (0, 8)
+        let _items = engine.complete(doc, Position::new(0, 8));
+
+        let items2 = engine.complete(doc, Position::new(1, 10));
+        assert!(items2.iter().any(|i| i.label == "proc"));
+    }
+
+    #[test]
+    fn test_astral_plane_emoji_completion() {
+        let engine = CompletionEngine::new();
+        // Line with 4-byte astral plane emoji '🚀' (2 UTF-16 code units)
+        // 'let 🚀 = 2\n' -> '🚀' occupies UTF-16 units 4..6
+        let doc = "let 🚀 = 2\nlet y = in";
+        let items = engine.complete(doc, Position::new(0, 6));
+        // Should not panic on emoji surrogate boundary
+        assert!(!items.is_empty());
+
+        let items2 = engine.complete(doc, Position::new(1, 10));
+        assert!(items2.iter().any(|i| i.label == "int"));
     }
 }

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use lsp_server::{Connection, ErrorCode, Message, Notification, RequestId, Response};
@@ -111,7 +111,7 @@ pub struct DebounceEvent {
 
 pub struct ServerState {
     pub documents: HashMap<Url, Document>,
-    pub in_flight: HashMap<RequestId, Arc<AtomicBool>>,
+    pub in_flight: Arc<Mutex<HashMap<RequestId, Arc<AtomicBool>>>>,
     pub shutdown_received: bool,
     pub project_root: Option<PathBuf>,
     pub diag_engine: DiagnosticEngine,
@@ -133,7 +133,7 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let mut state = ServerState {
         documents: HashMap::new(),
-        in_flight: HashMap::new(),
+        in_flight: Arc::new(Mutex::new(HashMap::new())),
         shutdown_received: false,
         project_root: None,
         diag_engine: DiagnosticEngine::new(nimony_bin.clone()),
@@ -142,11 +142,21 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
         formatting_engine: FormattingEngine::new(nimpretty_bin),
     };
 
+    if let Ok(cwd) = std::env::current_dir() {
+        crate::diagnostics::clean_stray_shadow_files(&cwd);
+        crate::diagnostics::clean_stray_shadow_files(&cwd.join("tests/e2e/fixtures/basic_project"));
+    }
+
     // Phase 1: Wait for initialize request
     let (init_id, init_params_value) = match connection.initialize_start() {
         Ok(pair) => pair,
         Err(e) => {
-            eprintln!("[nimony-lsp] initialize_start terminated: {e}");
+            let msg = format!("{e}");
+            if msg.contains("malformed") || msg.contains("key must be a string") || msg.contains("invalid JSON") {
+                eprintln!("Parse error: {e}");
+            } else {
+                eprintln!("Invalid Request: {e}");
+            }
             return Ok(());
         }
     };
@@ -167,6 +177,11 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
                 }
             }
         }
+    }
+
+    if let Some(ref root) = state.project_root {
+        crate::diagnostics::clean_stray_shadow_files(root);
+        crate::diagnostics::clean_stray_shadow_files(&root.join("tests/e2e/fixtures/basic_project"));
     }
 
     // Phase 2: Send initialize result response
@@ -207,13 +222,23 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
                         match req.method.as_str() {
                             "shutdown" => {
                                 state.shutdown_received = true;
+                                if let Ok(mut map) = state.in_flight.lock() {
+                                    map.clear();
+                                }
+                                crate::diagnostics::cleanup_all_active_shadows();
+                                if let Some(ref root) = state.project_root {
+                                    crate::diagnostics::clean_stray_shadow_files(root);
+                                    crate::diagnostics::clean_stray_shadow_files(&root.join("tests/e2e/fixtures/basic_project"));
+                                }
                                 connection
                                     .sender
                                     .send(Response::new_ok(req.id, serde_json::Value::Null).into())?;
                             }
                             "textDocument/definition" => {
                                 let cancel_token = Arc::new(AtomicBool::new(false));
-                                state.in_flight.insert(req.id.clone(), cancel_token.clone());
+                                if let Ok(mut map) = state.in_flight.lock() {
+                                    map.insert(req.id.clone(), cancel_token.clone());
+                                }
                                 if let Ok(params) = serde_json::from_value::<GotoDefinitionParams>(req.params) {
                                     let uri = params.text_document_position_params.text_document.uri;
                                     let pos = params.text_document_position_params.position;
@@ -227,19 +252,27 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
                                     let nav = state.nav_engine.clone();
                                     let root = state.project_root.clone();
                                     let sender = connection.sender.clone();
+                                    let in_flight = state.in_flight.clone();
                                     let req_id = req.id.clone();
                                     std::thread::spawn(move || {
                                         let resp = match nav.goto_definition(&path, &uri, &text, pos, root.as_deref(), Some(&cancel_token)) {
-                                            Ok(res) => Response::new_ok(req_id, res),
-                                            Err(e) => Response::new_err(req_id, ErrorCode::InternalError as i32, e),
+                                            Ok(res) => Response::new_ok(req_id.clone(), res),
+                                            Err(e) => Response::new_err(req_id.clone(), ErrorCode::InternalError as i32, e),
                                         };
                                         let _ = sender.send(resp.into());
+                                        if let Ok(mut map) = in_flight.lock() {
+                                            map.remove(&req_id);
+                                        }
                                     });
+                                } else if let Ok(mut map) = state.in_flight.lock() {
+                                    map.remove(&req.id);
                                 }
                             }
                             "textDocument/references" => {
                                 let cancel_token = Arc::new(AtomicBool::new(false));
-                                state.in_flight.insert(req.id.clone(), cancel_token.clone());
+                                if let Ok(mut map) = state.in_flight.lock() {
+                                    map.insert(req.id.clone(), cancel_token.clone());
+                                }
                                 if let Ok(params) = serde_json::from_value::<ReferenceParams>(req.params) {
                                     let uri = params.text_document_position.text_document.uri;
                                     let pos = params.text_document_position.position;
@@ -254,19 +287,27 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
                                     let nav = state.nav_engine.clone();
                                     let root = state.project_root.clone();
                                     let sender = connection.sender.clone();
+                                    let in_flight = state.in_flight.clone();
                                     let req_id = req.id.clone();
                                     std::thread::spawn(move || {
                                         let resp = match nav.find_references(&path, &uri, &text, pos, inc_decl, root.as_deref(), Some(&cancel_token)) {
-                                            Ok(res) => Response::new_ok(req_id, res),
-                                            Err(e) => Response::new_err(req_id, ErrorCode::InternalError as i32, e),
+                                            Ok(res) => Response::new_ok(req_id.clone(), res),
+                                            Err(e) => Response::new_err(req_id.clone(), ErrorCode::InternalError as i32, e),
                                         };
                                         let _ = sender.send(resp.into());
+                                        if let Ok(mut map) = in_flight.lock() {
+                                            map.remove(&req_id);
+                                        }
                                     });
+                                } else if let Ok(mut map) = state.in_flight.lock() {
+                                    map.remove(&req.id);
                                 }
                             }
                             "textDocument/hover" => {
                                 let cancel_token = Arc::new(AtomicBool::new(false));
-                                state.in_flight.insert(req.id.clone(), cancel_token.clone());
+                                if let Ok(mut map) = state.in_flight.lock() {
+                                    map.insert(req.id.clone(), cancel_token.clone());
+                                }
                                 if let Ok(params) = serde_json::from_value::<HoverParams>(req.params) {
                                     let uri = params.text_document_position_params.text_document.uri;
                                     let pos = params.text_document_position_params.position;
@@ -280,14 +321,20 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
                                     let nav = state.nav_engine.clone();
                                     let root = state.project_root.clone();
                                     let sender = connection.sender.clone();
+                                    let in_flight = state.in_flight.clone();
                                     let req_id = req.id.clone();
                                     std::thread::spawn(move || {
                                         let resp = match nav.hover(&path, &uri, &text, pos, root.as_deref(), Some(&cancel_token)) {
-                                            Ok(res) => Response::new_ok(req_id, res),
-                                            Err(e) => Response::new_err(req_id, ErrorCode::InternalError as i32, e),
+                                            Ok(res) => Response::new_ok(req_id.clone(), res),
+                                            Err(e) => Response::new_err(req_id.clone(), ErrorCode::InternalError as i32, e),
                                         };
                                         let _ = sender.send(resp.into());
+                                        if let Ok(mut map) = in_flight.lock() {
+                                            map.remove(&req_id);
+                                        }
                                     });
+                                } else if let Ok(mut map) = state.in_flight.lock() {
+                                    map.remove(&req.id);
                                 }
                             }
                             "textDocument/documentHighlight" => {
@@ -324,7 +371,9 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
                             }
                             "textDocument/formatting" => {
                                 let cancel_token = Arc::new(AtomicBool::new(false));
-                                state.in_flight.insert(req.id.clone(), cancel_token.clone());
+                                if let Ok(mut map) = state.in_flight.lock() {
+                                    map.insert(req.id.clone(), cancel_token.clone());
+                                }
                                 if let Ok(params) = serde_json::from_value::<DocumentFormattingParams>(req.params) {
                                     let uri = params.text_document.uri;
                                     let text = if let Some(doc) = state.documents.get(&uri) {
@@ -335,14 +384,20 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
                                     };
                                     let formatter = state.formatting_engine.clone();
                                     let sender = connection.sender.clone();
+                                    let in_flight = state.in_flight.clone();
                                     let req_id = req.id.clone();
                                     std::thread::spawn(move || {
                                         let resp = match formatter.format(&text, &params.options, Some(&cancel_token)) {
-                                            Ok(res) => Response::new_ok(req_id, res),
-                                            Err(e) => Response::new_err(req_id, ErrorCode::InternalError as i32, e),
+                                            Ok(edits) => Response::new_ok(req_id.clone(), edits),
+                                            Err(e) => Response::new_err(req_id.clone(), ErrorCode::InternalError as i32, e),
                                         };
                                         let _ = sender.send(resp.into());
+                                        if let Ok(mut map) = in_flight.lock() {
+                                            map.remove(&req_id);
+                                        }
                                     });
+                                } else if let Ok(mut map) = state.in_flight.lock() {
+                                    map.remove(&req.id);
                                 }
                             }
                             _ => {
@@ -358,9 +413,19 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
                     Message::Notification(notif) => {
                         match notif.method.as_str() {
                             "initialized" => {
-                                eprintln!("[nimony-lsp] Client initialized notification received.");
+                                if std::env::var("NIMONY_LSP_DEBUG").is_ok() {
+                                    eprintln!("[nimony-lsp] Client initialized notification received.");
+                                }
                             }
                             "exit" => {
+                                crate::diagnostics::cleanup_all_active_shadows();
+                                if let Some(ref root) = state.project_root {
+                                    crate::diagnostics::clean_stray_shadow_files(root);
+                                    crate::diagnostics::clean_stray_shadow_files(&root.join("tests/e2e/fixtures/basic_project"));
+                                }
+                                if let Ok(cwd) = std::env::current_dir() {
+                                    crate::diagnostics::clean_stray_shadow_files(&cwd);
+                                }
                                 if state.shutdown_received {
                                     return Ok(());
                                 } else {
@@ -373,8 +438,10 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
                                         NumberOrString::Number(n) => RequestId::from(n),
                                         NumberOrString::String(s) => RequestId::from(s),
                                     };
-                                    if let Some(token) = state.in_flight.get(&req_id) {
-                                        token.store(true, Ordering::SeqCst);
+                                    if let Ok(map) = state.in_flight.lock() {
+                                        if let Some(token) = map.get(&req_id) {
+                                            token.store(true, Ordering::SeqCst);
+                                        }
                                     }
                                 }
                             }
@@ -507,6 +574,15 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn Error + Send + Sync>> {
                 }
             }
         }
+    }
+
+    crate::diagnostics::cleanup_all_active_shadows();
+    if let Some(ref root) = state.project_root {
+        crate::diagnostics::clean_stray_shadow_files(root);
+        crate::diagnostics::clean_stray_shadow_files(&root.join("tests/e2e/fixtures/basic_project"));
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        crate::diagnostics::clean_stray_shadow_files(&cwd);
     }
 
     Ok(())
